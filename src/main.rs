@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use druid::widget::prelude::*;
-use druid::widget::{Align, Button, Flex, Label};
+use druid::widget::{Align, Button, Flex, Label, ProgressBar, WidgetExt};
 use druid::{AppLauncher, Data, Lens, LocalizedString, TimerToken, WindowDesc};
 
 use rodio::Source;
@@ -21,6 +21,7 @@ struct Pomodoro {
     seconds: u32,
     current_state: State,
     paused_state: State,
+    progress: f64,
 }
 
 #[derive(Clone, Data, PartialEq, Debug, Copy)]
@@ -43,20 +44,17 @@ impl Widget<Pomodoro> for TimerWidget {
                         data.seconds = data.seconds - 1;
                     }
                     if data.seconds <= 0 {
-                        let device = rodio::default_output_device().unwrap();
-
-                        let file = File::open("blip.wav").unwrap();
-                        let source = rodio::Decoder::new(BufReader::new(file)).unwrap();
-                        rodio::play_raw(&device, source.convert_samples());
+                        blip();
 
                         if data.current_state == State::Working {
-                            data.current_state = State::Break;
-                            data.seconds = BREAK_TIME;
+                            change_state(data, State::Break);
                         } else if data.current_state == State::Break {
-                            data.current_state = State::Working;
-                            data.seconds = WORK_TIME;
+                            change_state(data, State::Working);
                         }
                     }
+                    let duration = time_from_state(data.current_state);
+                    data.progress = (duration - data.seconds) as f64 / duration as f64;
+
                     self.timer_id = ctx.request_timer(Instant::now() + SECOND);
                     ctx.request_paint();
                 }
@@ -90,6 +88,27 @@ impl Widget<Pomodoro> for TimerWidget {
     fn paint(&mut self, _ctx: &mut PaintCtx, _data: &Pomodoro, _env: &Env) {}
 }
 
+fn time_from_state(state: State) -> u32 {
+    if state == State::Break {
+        return BREAK_TIME;
+    }
+
+    WORK_TIME
+}
+
+fn change_state(data: &mut Pomodoro, state: State) {
+    data.current_state = state;
+    data.seconds = time_from_state(state);
+}
+
+fn blip() {
+    let device = rodio::default_output_device().unwrap();
+
+    let file = File::open("blip.wav").unwrap();
+    let source = rodio::Decoder::new(BufReader::new(file)).unwrap();
+    rodio::play_raw(&device, source.convert_samples());
+}
+
 fn ui_builder() -> impl Widget<Pomodoro> {
     let mut col = Flex::column();
 
@@ -106,13 +125,15 @@ fn ui_builder() -> impl Widget<Pomodoro> {
         )
     })
     .with_text_size(64.0);
-    let interval_label =
+    let state_label =
         Label::new(|data: &Pomodoro, _env: &_| format!("{:?}", data.current_state));
 
     col.add_flex_child(timer_label, 1.0);
     col.add_flex_spacer(1.0);
+    col.add_flex_child(ProgressBar::new().lens(Pomodoro::progress).fix_width(150.0), 1.0);
+    col.add_flex_spacer(1.0);
 
-    col.add_flex_child(interval_label, 1.0);
+    col.add_flex_child(state_label, 1.0);
     col.add_flex_spacer(1.0);
 
     let start_button = Button::new("Start/Pause").on_click(|_ctx, data: &mut Pomodoro, _env| {
@@ -130,6 +151,8 @@ fn ui_builder() -> impl Widget<Pomodoro> {
 
 pub fn main() {
     let window = WindowDesc::new(ui_builder)
+        .window_size((500., 400.00))
+        .with_min_size((300., 300.00))
         .title(LocalizedString::new("pomodoro-window-title").with_placeholder("Pomodoro"));
 
     AppLauncher::with_window(window)
@@ -138,6 +161,7 @@ pub fn main() {
             seconds: WORK_TIME,
             current_state: State::Paused,
             paused_state: State::Working,
+            progress: 0.0,
         })
         .expect("launch failed");
 }
